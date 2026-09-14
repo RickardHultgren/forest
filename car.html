@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Country Road Fighter</title>
+<style>
+  :root{
+    --bg:#0e1720;
+    --panel:rgba(10,18,25,.86);
+    --text:#f4f0dc;
+    --accent:#f6c85f;
+    --danger:#ff6b6b;
+    --ok:#7bd389;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font-family:ui-monospace,SFMono-Regular,Consolas,monospace;overflow:hidden}
+  body{display:grid;place-items:center}
+  #wrap{position:relative;width:min(100vw,600px);height:100vh;max-height:1000px;background:#000;box-shadow:0 0 40px #0008}
+  canvas{width:100%;height:100%;display:block;image-rendering:pixelated;background:#87b95d;touch-action:none}
+  #hud{
+    position:absolute;inset:0 0 auto 0;display:grid;grid-template-columns:1fr auto 1fr;gap:8px;
+    padding:10px 12px;pointer-events:none;text-shadow:2px 2px 0 #000;
+    font-weight:800;font-size:clamp(12px,2.8vw,17px)
+  }
+  #hud .center{text-align:center}
+  #hud .right{text-align:right}
+  .pill{display:inline-block;background:#0008;border:1px solid #ffffff44;border-radius:7px;padding:5px 7px}
+  #message{
+    position:absolute;left:50%;top:19%;transform:translateX(-50%);min-width:60%;max-width:92%;
+    text-align:center;padding:8px 12px;background:#000b;border:2px solid #fff4;border-radius:8px;
+    opacity:0;transition:opacity .15s;pointer-events:none;font-weight:900;text-shadow:2px 2px #000
+  }
+  #message.show{opacity:1}
+  #start{
+    position:absolute;inset:0;display:grid;place-items:center;background:linear-gradient(#172432bb,#091016e8);
+    padding:24px;text-align:center
+  }
+  #card{max-width:500px;background:#071018e6;border:2px solid #ffffff28;border-radius:14px;padding:24px}
+  h1{margin:.1em 0 .45em;font-size:clamp(27px,6vw,44px);letter-spacing:-1px}
+  p{line-height:1.45;color:#d9e4e8}
+  button{
+    font:inherit;font-weight:900;color:#111;background:var(--accent);border:0;border-radius:9px;padding:12px 18px;cursor:pointer
+  }
+  #controls{
+    position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:space-between;align-items:end;
+    padding:14px;pointer-events:none
+  }
+  .cluster{display:flex;gap:10px;pointer-events:auto}
+  .ctrl{
+    width:64px;height:64px;border-radius:50%;background:#071018a8;color:white;border:2px solid #ffffff55;
+    display:grid;place-items:center;font-size:24px;user-select:none;-webkit-user-select:none;touch-action:none
+  }
+  .ctrl:active,.ctrl.on{background:#ffffff33}
+  @media (pointer:fine){#controls{opacity:.22}.ctrl{width:54px;height:54px}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="480" height="800" aria-label="Country Road Fighter game"></canvas>
+
+  <div id="hud">
+    <div><span class="pill">DIST <span id="dist">0.0</span> km</span></div>
+    <div class="center"><span class="pill"><span id="speed">0</span> km/h · LIMIT <span id="limit">70</span></span></div>
+    <div class="right"><span class="pill">SAFE <span id="score">1000</span></span></div>
+  </div>
+
+  <div id="message"></div>
+
+  <div id="controls">
+    <div class="cluster">
+      <div class="ctrl" data-key="ArrowLeft">◀</div>
+      <div class="ctrl" data-key="ArrowRight">▶</div>
+    </div>
+    <div class="cluster">
+      <div class="ctrl" data-key="ArrowDown">▼</div>
+      <div class="ctrl" data-key="ArrowUp">▲</div>
+    </div>
+  </div>
+
+  <div id="start">
+    <div id="card">
+      <h1>COUNTRY ROAD FIGHTER</h1>
+      <p>An original 1980s-style vertical road game inspired by the era of <em>Road Fighter</em>, but with new countryside graphics and rules.</p>
+      <p><b>Drive legally.</b> Stay below the posted limit, avoid traffic, brake for red lights, and make distance without wrecking your safety score.</p>
+      <p>Keyboard: <b>← →</b> steer, <b>↑</b> accelerate, <b>↓</b> brake. Touch controls are built in.</p>
+      <button id="play">START ENGINE</button>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   SPRITE DATABASE
+   Every pixel-art sprite is defined as JSON data.
+   "pixels" is an array of text rows. Each character maps to a
+   palette entry. "." means transparent.
+   ============================================================ */
+const SPRITES = JSON.parse(String.raw`{
+  "playerCar": {
+    "palette": {"1":"#e9ecef","2":"#d62828","3":"#780000","4":"#1d3557","5":"#fcbf49","6":"#111111"},
+    "pixels": [
+      "....2222....",
+      "...223322...",
+      "...244442...",
+      "..22444422..",
+      "..22222222..",
+      ".2262222622.",
+      ".2262222622.",
+      ".2222222222.",
+      ".2222112222.",
+      ".2222112222.",
+      ".2222222222.",
+      ".2262222622.",
+      ".2262222622.",
+      ".2222222222.",
+      "..22255222..",
+      "..22255222..",
+      "...222222...",
+      "....2222...."
+    ]
+  },
+  "trafficCar": {
+    "palette": {"1":"#f8f9fa","2":"#277da1","3":"#184e77","4":"#22223b","5":"#ffd166","6":"#111111"},
+    "pixels": [
+      "....2222....",
+      "...223322...",
+      "...244442...",
+      "..22444422..",
+      "..22222222..",
+      ".2262222622.",
+      ".2262222622.",
+      ".2222222222.",
+      ".2222112222.",
+      ".2222112222.",
+      ".2222222222.",
+      ".2262222622.",
+      ".2262222622.",
+      ".2222222222.",
+      "..22255222..",
+      "..22255222..",
+      "...222222...",
+      "....2222...."
+    ]
+  },
+  "oncomingCar": {
+    "palette": {"1":"#f8f9fa","2":"#f8961e","3":"#bc6c25","4":"#22223b","5":"#ffffff","6":"#111111"},
+    "pixels": [
+      "....2552....",
+      "...225522...",
+      "...222222...",
+      "..22622622..",
+      "..22622622..",
+      ".2222222222.",
+      ".2222112222.",
+      ".2222112222.",
+      ".2222222222.",
+      ".2262222622.",
+      ".2262222622.",
+      "..22222222..",
+      "..22444422..",
+      "...244442...",
+      "...223322...",
+      "....2222...."
+    ]
+  },
+  "tractor": {
+    "palette": {"1":"#264653","2":"#2a9d8f","3":"#1b4332","4":"#f4a261","5":"#111111","6":"#d9ed92"},
+    "pixels": [
+      ".....44.....",
+      ".....44.....",
+      "....2222....",
+      "...223322...",
+      "...222222...",
+      "..52222225..",
+      ".5522222255.",
+      ".5522222255.",
+      "..52222225..",
+      "...222222...",
+      "..52222225..",
+      ".5522222255.",
+      ".5522222255.",
+      "..52222225..",
+      "...222222...",
+      "....2222...."
+    ]
+  },
+  "tree": {
+    "palette": {"1":"#1b5e20","2":"#2e7d32","3":"#43a047","4":"#6d4c41","5":"#4e342e"},
+    "pixels": [
+      ".....2.....",
+      "...22222...",
+      "..2211122..",
+      ".221333122.",
+      ".213333312.",
+      "22133333122",
+      ".211333112.",
+      "..2211122..",
+      "...2442....",
+      "...2442....",
+      "...2552....",
+      "...2552...."
+    ]
+  },
+  "house": {
+    "palette": {"1":"#8d5524","2":"#c68642","3":"#e0ac69","4":"#7f5539","5":"#90e0ef","6":"#5b3a29","7":"#ef233c"},
+    "pixels": [
+      "......7......",
+      ".....777.....",
+      "....77777....",
+      "...7777777...",
+      "..777777777..",
+      ".77777777777.",
+      "1111111111111",
+      "1333333333331",
+      "1353333353331",
+      "1353333353331",
+      "1333333333331",
+      "1333366333331",
+      "1333366333331",
+      "1333366333331",
+      "1111111111111"
+    ]
+  },
+  "trafficLight": {
+    "palette": {"1":"#202124","2":"#3c4043","3":"#ff3b30","4":"#ffd60a","5":"#30d158","6":"#777777"},
+    "pixels": [
+      "..1111..",
+      ".122221.",
+      ".123321.",
+      ".122221.",
+      ".124421.",
+      ".122221.",
+      ".125521.",
+      ".122221.",
+      "..1111..",
+      "...66...",
+      "...66...",
+      "...66...",
+      "...66...",
+      "..6666.."
+    ]
+  },
+  "speedSign": {
+    "palette": {"1":"#f8f9fa","2":"#e63946","3":"#222222","4":"#888888"},
+    "pixels": [
+      "...222...",
+      "..21112..",
+      ".2111112.",
+      ".2111112.",
+      ".2111112.",
+      "..21112..",
+      "...222...",
+      "....4....",
+      "....4....",
+      "....4....",
+      "...444..."
+    ]
+  }
+}`);
+
+/* ============================================================
+   Canvas and utilities
+   ============================================================ */
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d", {alpha:false});
+ctx.imageSmoothingEnabled = false;
+
+const W = canvas.width, H = canvas.height;
+const road = {x:105, w:270, shoulder:15};
+const laneCenters = [road.x+45, road.x+100, road.x+170, road.x+225];
+
+const ui = {
+  dist: document.getElementById("dist"),
+  speed: document.getElementById("speed"),
+  limit: document.getElementById("limit"),
+  score: document.getElementById("score"),
+  msg: document.getElementById("message"),
+  start: document.getElementById("start"),
+  play: document.getElementById("play")
+};
+
+const keys = Object.create(null);
+let last = 0, gameStarted = false, gameOver = false;
+let worldScroll = 0, elapsed = 0, nextTraffic = 0, nextScenery = 0, nextSignal = 750;
+let messageTimer = 0;
+
+const player = {
+  x: laneCenters[3] - 12,
+  y: 645,
+  w: 24,
+  h: 36,
+  speed: 0,
+  maxSpeed: 90,
+  distanceKm: 0,
+  safety: 1000,
+  invuln: 0,
+  steer: 0
+};
+
+let speedLimit = 70;
+let traffic = [];
+let scenery = [];
+let signals = [];
+let roadMarksOffset = 0;
+let zoneIndex = 0;
+
+const zones = [
+  {after:0.0, limit:70, name:"OPEN COUNTRY"},
+  {after:1.2, limit:50, name:"VILLAGE"},
+  {after:2.0, limit:80, name:"COUNTRY ROAD"},
+  {after:3.4, limit:50, name:"HAMLET"},
+  {after:4.2, limit:70, name:"FARMLAND"},
+  {after:5.8, limit:80, name:"OPEN ROAD"}
+];
+
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function rand(a,b){ return a+Math.random()*(b-a); }
+function irand(a,b){ return Math.floor(rand(a,b+1)); }
+
+function drawSprite(name,x,y,scale=2,paletteOverride=null,flipY=false){
+  const s = SPRITES[name], rows = s.pixels;
+  const ph = rows.length;
+  ctx.save();
+  if(flipY){
+    ctx.translate(0, y*2 + ph*scale);
+    ctx.scale(1,-1);
+    y = 0;
+  }
+  for(let yy=0; yy<ph; yy++){
+    const row = rows[yy];
+    for(let xx=0; xx<row.length; xx++){
+      const ch = row[xx];
+      if(ch === ".") continue;
+      ctx.fillStyle = (paletteOverride && paletteOverride[ch]) || s.palette[ch] || "#fff";
+      ctx.fillRect(Math.round(x+xx*scale), Math.round(y+yy*scale), scale, scale);
+    }
+  }
+  ctx.restore();
+}
+
+function showMessage(text, seconds=1.6){
+  ui.msg.textContent = text;
+  ui.msg.classList.add("show");
+  messageTimer = seconds;
+}
+
+function rectsOverlap(a,b,pad=2){
+  return a.x+pad < b.x+b.w-pad &&
+         a.x+a.w-pad > b.x+pad &&
+         a.y+pad < b.y+b.h-pad &&
+         a.y+a.h-pad > b.y+pad;
+}
+
+/* ============================================================
+   Input
+   ============================================================ */
+addEventListener("keydown", e=>{
+  if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown"," "].includes(e.key)) e.preventDefault();
+  keys[e.key] = true;
+  if(e.key===" " && gameOver) startGame();
+});
+addEventListener("keyup", e=> keys[e.key] = false);
+
+document.querySelectorAll(".ctrl").forEach(btn=>{
+  const k = btn.dataset.key;
+  const on = e=>{e.preventDefault();keys[k]=true;btn.classList.add("on")};
+  const off = e=>{e.preventDefault();keys[k]=false;btn.classList.remove("on")};
+  btn.addEventListener("pointerdown",on);
+  btn.addEventListener("pointerup",off);
+  btn.addEventListener("pointercancel",off);
+  btn.addEventListener("pointerleave",off);
+});
+ui.play.onclick = startGame;
+
+/* ============================================================
+   World generation
+   ============================================================ */
+function resetWorld(){
+  traffic = [];
+  scenery = [];
+  signals = [];
+  worldScroll = 0;
+  roadMarksOffset = 0;
+  nextTraffic = 80;
+  nextScenery = 0;
+  nextSignal = 900;
+  zoneIndex = 0;
+  speedLimit = 70;
+  player.x = laneCenters[3]-12;
+  player.y = 645;
+  player.speed = 0;
+  player.distanceKm = 0;
+  player.safety = 1000;
+  player.invuln = 0;
+  elapsed = 0;
+  gameOver = false;
+  for(let i=0;i<14;i++) spawnScenery(-i*65);
+}
+
+function startGame(){
+  resetWorld();
+  gameStarted = true;
+  ui.start.style.display = "none";
+  last = performance.now();
+  requestAnimationFrame(loop);
+}
+
+function spawnTraffic(y=-60){
+  const oncoming = Math.random() < 0.33;
+  const lane = oncoming ? irand(0,1) : irand(2,3);
+  const tractor = !oncoming && Math.random()<0.16;
+  const paletteChoices = ["#277da1","#43aa8b","#9b5de5","#ef476f","#ffd166","#f77f00","#6c757d"];
+  traffic.push({
+    x: laneCenters[lane]-12,
+    y,
+    w:24,
+    h: tractor ? 32 : 36,
+    lane,
+    oncoming,
+    tractor,
+    ownSpeed: tractor ? rand(25,40) : (oncoming ? rand(55,85) : rand(45,78)),
+    body: paletteChoices[irand(0,paletteChoices.length-1)],
+    passed:false
+  });
+}
+
+function spawnScenery(y=-30){
+  const left = Math.random()<.5;
+  const kindRoll = Math.random();
+  const kind = kindRoll<.68 ? "tree" : (kindRoll<.85 ? "house" : "field");
+  let x;
+  if(left) x = rand(14, road.x-42);
+  else x = rand(road.x+road.w+20, W-45);
+  scenery.push({x,y,kind,left,seed:Math.random()});
+}
+
+function spawnSignal(){
+  const y = -120;
+  signals.push({
+    y,
+    state: Math.random()<.58 ? "red" : "green",
+    timer: rand(4,9),
+    crossed:false,
+    penalized:false
+  });
+}
+
+/* ============================================================
+   Simulation
+   ============================================================ */
+function update(dt){
+  elapsed += dt;
+  if(messageTimer>0){
+    messageTimer -= dt;
+    if(messageTimer<=0) ui.msg.classList.remove("show");
+  }
+  if(player.invuln>0) player.invuln -= dt;
+
+  // Update road zone based on distance.
+  while(zoneIndex+1 < zones.length && player.distanceKm >= zones[zoneIndex+1].after){
+    zoneIndex++;
+    speedLimit = zones[zoneIndex].limit;
+    showMessage(zones[zoneIndex].name+" · "+speedLimit+" km/h");
+  }
+
+  // Acceleration obeys posted legal limit.
+  const accelerating = keys.ArrowUp || keys.w || keys.W;
+  const braking = keys.ArrowDown || keys.s || keys.S;
+  if(accelerating){
+    const legalCeiling = Math.min(player.maxSpeed, speedLimit);
+    if(player.speed < legalCeiling) player.speed += 24*dt;
+    else player.speed -= 8*dt;
+  } else {
+    player.speed -= 5*dt;
+  }
+  if(braking) player.speed -= 42*dt;
+  if(player.speed > speedLimit) player.speed -= 14*dt; // legal-speed assist after a limit drops
+  player.speed = clamp(player.speed,0,player.maxSpeed);
+
+  // Steering becomes slightly more sensitive with speed.
+  const steerInput = (keys.ArrowLeft||keys.a||keys.A?-1:0)+(keys.ArrowRight||keys.d||keys.D?1:0);
+  player.steer = lerp(player.steer, steerInput, clamp(8*dt,0,1));
+  player.x += player.steer * (70 + player.speed*.45) * dt;
+  player.x = clamp(player.x, road.x+7, road.x+road.w-player.w-7);
+
+  // Convert km/h to pleasing arcade scroll.
+  const scroll = player.speed * 2.4 * dt;
+  worldScroll += scroll;
+  roadMarksOffset = (roadMarksOffset + scroll) % 56;
+  player.distanceKm += player.speed * dt / 3600;
+
+  // Spawn traffic with density linked to speed/distance.
+  nextTraffic -= scroll;
+  if(nextTraffic<=0){
+    spawnTraffic();
+    nextTraffic = rand(130,240);
+  }
+
+  nextScenery -= scroll;
+  if(nextScenery<=0){
+    spawnScenery();
+    nextScenery = rand(36,75);
+  }
+
+  nextSignal -= scroll;
+  if(nextSignal<=0){
+    spawnSignal();
+    nextSignal = rand(900,1500);
+  }
+
+  // Traffic movement is relative to the player's road scroll.
+  for(const car of traffic){
+    const rel = car.oncoming ? (player.speed + car.ownSpeed) : (player.speed - car.ownSpeed);
+    car.y += rel * 2.4 * dt;
+
+    // Simple traffic-light obedience for cars travelling in player's direction.
+    for(const sig of signals){
+      const lineY = sig.y + 70;
+      if(!car.oncoming && sig.state==="red" && car.y < lineY-32 && car.y > lineY-135){
+        car.y -= Math.max(0, rel*2.4*dt); // undo road-relative advance near red
+      }
+    }
+
+    if(rectsOverlap(player,car,4) && player.invuln<=0){
+      player.speed *= .45;
+      player.safety = Math.max(0, player.safety-140);
+      player.invuln = 1.0;
+      showMessage("COLLISION · -140 SAFETY");
+      car.x += car.x < player.x ? -22 : 22;
+    }
+
+    if(!car.passed && car.y > H+25){
+      car.passed = true;
+      if(!car.oncoming) player.safety += 2;
+    }
+  }
+  traffic = traffic.filter(c=>c.y>-120 && c.y<H+100);
+
+  for(const s of scenery) s.y += scroll;
+  scenery = scenery.filter(s=>s.y<H+100);
+
+  // Traffic light cycle and red-light enforcement.
+  for(const sig of signals){
+    sig.y += scroll;
+    sig.timer -= dt;
+    if(sig.timer<=0){
+      if(sig.state==="red"){sig.state="green";sig.timer=rand(6,10);}
+      else if(sig.state==="green"){sig.state="amber";sig.timer=2.0;}
+      else {sig.state="red";sig.timer=rand(5,9);}
+    }
+    const lineY = sig.y + 72;
+    const nose = player.y;
+    if(!sig.crossed && lineY >= player.y-2 && lineY <= player.y+8){
+      sig.crossed = true;
+      if(sig.state==="red" && player.speed>4){
+        sig.penalized = true;
+        player.safety = Math.max(0,player.safety-250);
+        showMessage("RED LIGHT · -250 SAFETY",2.1);
+      } else if(sig.state==="amber" && player.speed>20){
+        player.safety = Math.max(0,player.safety-40);
+        showMessage("LATE ON AMBER · -40",1.5);
+      } else {
+        player.safety += 12;
+        showMessage("SAFE CROSSING · +12",1.2);
+      }
+    }
+  }
+  signals = signals.filter(s=>s.y<H+160);
+
+  // Slow-speed shoulder penalty if clipping the edge.
+  if((player.x<road.x+13 || player.x+player.w>road.x+road.w-13) && player.speed>40){
+    player.speed -= 12*dt;
+    player.safety = Math.max(0,player.safety-4*dt);
+  }
+
+  // Game over at zero safety.
+  if(player.safety<=0){
+    player.safety=0;
+    endGame();
+  }
+
+  ui.dist.textContent = player.distanceKm.toFixed(1);
+  ui.speed.textContent = Math.round(player.speed);
+  ui.limit.textContent = speedLimit;
+  ui.score.textContent = Math.round(player.safety);
+}
+
+function endGame(){
+  gameOver = true;
+  gameStarted = false;
+  ui.start.style.display = "grid";
+  document.querySelector("#card").innerHTML = `
+    <h1>TRIP OVER</h1>
+    <p>You covered <b>${player.distanceKm.toFixed(2)} km</b> before your safety score reached zero.</p>
+    <p>Press <b>SPACE</b> or use the button to try again.</p>
+    <button id="again">DRIVE AGAIN</button>`;
+  document.getElementById("again").onclick = startGame;
+}
+
+/* ============================================================
+   Rendering
+   ============================================================ */
+function draw(){
+  // Countryside base
+  ctx.fillStyle="#7cab52";
+  ctx.fillRect(0,0,W,H);
+
+  // Alternating field strips
+  const strip = 80;
+  const o = worldScroll*.35 % strip;
+  for(let y=-strip+o; y<H; y+=strip*2){
+    ctx.fillStyle="#8dbb58";
+    ctx.fillRect(0,y,road.x-road.shoulder,strip);
+    ctx.fillRect(road.x+road.w+road.shoulder,y,W-(road.x+road.w+road.shoulder),strip);
+  }
+
+  // Distant drainage / field lines
+  ctx.fillStyle="#689f45";
+  for(let y=(-worldScroll*.18)%42; y<H; y+=42){
+    ctx.fillRect(0,y,road.x-18,2);
+    ctx.fillRect(road.x+road.w+18,y,W,2);
+  }
+
+  // Road shoulders
+  ctx.fillStyle="#d8c6a1";
+  ctx.fillRect(road.x-road.shoulder,0,road.shoulder,H);
+  ctx.fillRect(road.x+road.w,0,road.shoulder,H);
+
+  // Road surface
+  ctx.fillStyle="#4b4f52";
+  ctx.fillRect(road.x,0,road.w,H);
+
+  // Road edges
+  ctx.fillStyle="#f1f1e6";
+  ctx.fillRect(road.x+5,0,4,H);
+  ctx.fillRect(road.x+road.w-9,0,4,H);
+
+  // Centerline separating directions
+  ctx.fillStyle="#f5cf4d";
+  ctx.fillRect(road.x+road.w/2-2,0,4,H);
+
+  // Dashed lane lines
+  ctx.fillStyle="#e7e7df";
+  for(const lx of [road.x+road.w/4, road.x+road.w*3/4]){
+    for(let y=-56+roadMarksOffset;y<H;y+=56) ctx.fillRect(lx-2,y,4,28);
+  }
+
+  drawScenery();
+  drawSignals();
+  drawTraffic();
+  drawPlayer();
+
+  // subtle scanlines
+  ctx.fillStyle="rgba(0,0,0,.035)";
+  for(let y=0;y<H;y+=4) ctx.fillRect(0,y,W,1);
+}
+
+function drawScenery(){
+  const sorted = [...scenery].sort((a,b)=>a.y-b.y);
+  for(const s of sorted){
+    if(s.kind==="tree"){
+      drawSprite("tree",s.x,s.y,3);
+    }else if(s.kind==="house"){
+      drawSprite("house",s.x,s.y,2.4);
+    }else{
+      // Crop bales / field patch
+      ctx.fillStyle="#d4a64c";
+      for(let i=0;i<3;i++){
+        const yy=s.y+i*12;
+        ctx.fillRect(s.x,yy,22,5);
+        ctx.fillRect(s.x+27,yy+5,16,4);
+      }
+    }
+  }
+}
+
+function drawSignals(){
+  for(const sig of signals){
+    const lineY = sig.y+72;
+
+    // Intersection road crossing
+    ctx.fillStyle="#53575a";
+    ctx.fillRect(0,sig.y+35,W,58);
+
+    // Stop line
+    ctx.fillStyle="#f8f9fa";
+    ctx.fillRect(road.x+road.w/2+5,lineY,road.w/2-14,5);
+
+    // Side road edge hints
+    ctx.fillStyle="#e5e5dc";
+    ctx.fillRect(0,sig.y+38,road.x-15,3);
+    ctx.fillRect(road.x+road.w+15,sig.y+38,W,3);
+    ctx.fillRect(0,sig.y+88,road.x-15,3);
+    ctx.fillRect(road.x+road.w+15,sig.y+88,W,3);
+
+    // Light housings on both sides
+    drawTrafficLightAt(road.x+road.w-2,sig.y-15,sig.state,2.0);
+    drawTrafficLightAt(road.x-18,sig.y-15,sig.state,2.0);
+  }
+}
+
+function drawTrafficLightAt(x,y,state,scale){
+  // Draw sprite, then repaint lamp circles to current state.
+  drawSprite("trafficLight",x,y,scale);
+  const centers = [
+    {state:"red", yy:y+2*scale+1.5*scale},
+    {state:"amber", yy:y+4*scale+3.0*scale},
+    {state:"green", yy:y+6*scale+4.5*scale}
+  ];
+  const pos = state==="red" ? y+3.1*scale : state==="amber" ? y+6.1*scale : y+9.1*scale;
+  ctx.fillStyle = state==="red" ? "#ff453a" : state==="amber" ? "#ffd60a" : "#32d74b";
+  ctx.beginPath();
+  ctx.arc(x+4*scale,pos,1.5*scale,0,Math.PI*2);
+  ctx.fill();
+}
+
+function drawTraffic(){
+  for(const car of traffic){
+    if(car.tractor){
+      drawSprite("tractor",car.x,car.y,2);
+    }else{
+      const sprite = car.oncoming ? "oncomingCar" : "trafficCar";
+      const override = {"2":car.body};
+      drawSprite(sprite,car.x,car.y,2,override);
+    }
+  }
+}
+
+function drawPlayer(){
+  if(player.invuln>0 && Math.floor(player.invuln*12)%2===0) return;
+  drawSprite("playerCar",player.x,player.y,2);
+}
+
+function loop(now){
+  if(!gameStarted) return;
+  const dt = Math.min(.035,(now-last)/1000 || 0);
+  last = now;
+  update(dt);
+  draw();
+  if(gameStarted) requestAnimationFrame(loop);
+}
+
+/* Draw attract screen before start */
+resetWorld();
+player.speed=35;
+for(let i=0;i<5;i++) spawnTraffic(-i*150-80);
+draw();
+</script>
+</body>
+</html>
